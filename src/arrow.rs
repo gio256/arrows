@@ -73,15 +73,6 @@ pub trait Arrow<A, B>: Category<A, B> {
         B: 'static,
         A1: 'static,
         B1: 'static;
-    // The associated type bound says ~ that forall T, U | M<T, U>: Arrow<T, U>
-    // But what we need here is a proof that forall T, U, T', U' | M<T, U>: Arrow<T', U'>.
-    // Removing the default impl allows this bound to be removed.
-    // <Self::AFamily as ArrowFamily>::M<(A, A1), (B, A1)>: Arrow<(B, A1), (A1, B)>,
-    // {
-    // let swap0 = Arrow::arrow(|(b, a1): (B, A1)| (a1, b));
-    // let swap1 = Arrow::arrow(|(b1, b): (B1, B)| (b, b1));
-    // self.fst::<A1>().then(swap0).then(g.fst()).then(swap1)
-    // }
 
     // Also called fanout, because of it's relationship to |||/fanin/owise
     // (&&&) :: m a b -> m a b' -> m a (b,b')
