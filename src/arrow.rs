@@ -7,6 +7,7 @@ pub trait CatFamily {
 pub trait Category<A, B> {
     type CFamily: CatFamily<M<A, B> = Self>;
 
+    // right-to-left composition
     // (>>>) :: Category cat => cat a b -> cat b c -> cat a c
     fn then<C>(
         self,
@@ -17,6 +18,7 @@ pub trait Category<A, B> {
         B: 'static,
         C: 'static;
 
+    // left-to-right composition
     // (.) or (<<<) :: Category cat => cat b c -> cat a b -> cat a c
     fn after<A0>(
         self,
@@ -32,13 +34,14 @@ pub trait Category<A, B> {
     }
 }
 
-pub trait ArrowFamily {
-    type M<T, U>: Arrow<T, U, AFamily = Self>;
+pub trait ArrowFamily: CatFamily {
+    type M<T, U>: Arrow<T, U, AFamily = Self> + Category<T, U, CFamily = Self>;
 }
 
 pub trait Arrow<A, B>: Category<A, B> {
     type AFamily: ArrowFamily<M<A, B> = Self>;
 
+    // arr :: (a -> b) -> m a b
     fn arrow<F>(f: F) -> Self
     where
         F: Fn(A) -> B + Clone + 'static;
@@ -57,7 +60,7 @@ pub trait Arrow<A, B>: Category<A, B> {
         B: 'static,
         C: 'static;
 
-    // (***) :: a b c -> a b' c' -> a (b,b') (c,c')
+    // (***) :: m b c -> m b' c' -> m (b,b') (c,c')
     fn both<A1, B1>(
         self,
         g: <Self::AFamily as ArrowFamily>::M<A1, B1>,
@@ -78,7 +81,8 @@ pub trait Arrow<A, B>: Category<A, B> {
     // self.fst::<A1>().then(swap0).then(g.fst()).then(swap1)
     // }
 
-    fn fan<B1>(
+    // (&&&) :: m a b -> m a b' -> m a (b,b')
+    fn fanout<B1>(
         self,
         g: <Self::AFamily as ArrowFamily>::M<A, B1>,
     ) -> <Self::AFamily as ArrowFamily>::M<A, (B, B1)>
@@ -87,4 +91,77 @@ pub trait Arrow<A, B>: Category<A, B> {
         A: Clone + 'static,
         B: 'static,
         B1: 'static;
+
+    // precomposition with a pure function
+    // (^>>) :: Arrow m => (b -> c) -> m c d -> m b d
+    fn after_pure<F, A0>(self, f: F) -> <Self::AFamily as ArrowFamily>::M<A0, B>
+    where
+        F: Fn(A0) -> A + Clone + 'static,
+        A: 'static,
+        B: 'static,
+        A0: 'static;
+
+    // postcomposition with a pure function
+    // (>>^) :: Arrow m => m b c -> (c -> d) -> m b d
+    fn then_pure<F, C>(self, f: F) -> <Self::AFamily as ArrowFamily>::M<A, C>
+    where
+        F: Fn(B) -> C + Clone + 'static,
+        A: 'static,
+        B: 'static,
+        C: 'static;
+}
+
+pub trait ChoiceFamily {
+    type M<T, U>: ArrowChoice<T, U, AFamily = Self> + Category<T, U, CFamily = Self>;
+}
+
+pub trait ArrowChoice<A, B>: Arrow<A, B> {
+    type AcFamily: ChoiceFamily<M<A, B> = Self>;
+
+    // left :: m b c -> m (Either b d) (Either c d)
+    fn left<D>(self) -> <Self::AcFamily as ChoiceFamily>::M<Either<A, D>, Either<B, D>>
+    where
+        A: 'static,
+        B: 'static;
+
+    // right :: a b c -> a (Either d b) (Either d c)
+    fn right<D>(self) -> <Self::AcFamily as ChoiceFamily>::M<Either<D, A>, Either<D, B>>
+    where
+        A: 'static,
+        B: 'static,
+        D: 'static;
+
+    // (+++) :: m b c -> m b' c' -> m (Either b b') (Either c c')
+    fn split<A1, B1>(
+        self,
+        g: <Self::AcFamily as ChoiceFamily>::M<A1, B1>,
+    ) -> <Self::AcFamily as ChoiceFamily>::M<Either<A, A1>, Either<B, B1>>
+    where
+        A: 'static,
+        B: 'static,
+        A1: 'static,
+        B1: 'static;
+
+    // (|||) :: m a b -> m c b -> m (Either a c) b
+    fn fanin<C>(
+        self,
+        g: <Self::AcFamily as ChoiceFamily>::M<C, B>,
+    ) -> <Self::AcFamily as ChoiceFamily>::M<Either<A, C>, B>
+    where
+        A: 'static,
+        B: 'static,
+        C: 'static;
+}
+
+pub enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+impl<L, R> Either<L, R> {
+    pub fn mirror(self) -> Either<R, L> {
+        match self {
+            Either::Left(left) => Either::Right(left),
+            Either::Right(right) => Either::Left(right),
+        }
+    }
 }
