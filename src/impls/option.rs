@@ -75,3 +75,36 @@ impl<A> Monad<A> for Option<A> {
         opt_opt.and_then(std::convert::identity)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_opt() {
+        // functor
+        let none: Option<usize> = None;
+        let opt = Some(1);
+        assert_eq!(opt.fmap(|x| x * 2), Some(2));
+        assert_eq!(none.fmap(|x| x * 2), None);
+
+        assert_eq!(opt.map_replace(7), Some(7));
+        assert_eq!(none.map_replace(7), None);
+
+        // applicative
+        assert_eq!(Option::pure(5), Some(5));
+
+        let f = Some(|x| x + 3);
+        let f_none: Option<fn(usize) -> usize> = None;
+        // let res = vec.clone().apply(fs);
+        assert_eq!(opt.apply(f), Some(4));
+        assert_eq!(none.apply(f), None);
+        assert_eq!(opt.apply(f_none), None);
+
+        // monad
+        assert_eq!(opt.bind(Some), opt);
+
+        let double_opt = Some(opt);
+        assert_eq!(Option::join(double_opt), opt);
+    }
+}

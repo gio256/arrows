@@ -1,3 +1,5 @@
+use crate::impls::either::Either;
+
 pub trait CatFamily {
     type M<T, U>: Category<T, U, CFamily = Self>;
 
@@ -39,7 +41,7 @@ pub trait ArrowFamily: CatFamily {
 }
 
 pub trait Arrow<A, B>: Category<A, B> {
-    type AFamily: ArrowFamily<M<A, B> = Self>;
+    type AFamily: ArrowFamily<M<A, B> = Self> + CatFamily<M<A, B> = Self>;
 
     // arr :: (a -> b) -> m a b
     fn arrow<F>(f: F) -> Self
@@ -81,8 +83,9 @@ pub trait Arrow<A, B>: Category<A, B> {
     // self.fst::<A1>().then(swap0).then(g.fst()).then(swap1)
     // }
 
+    // Also called fanout, because of it's relationship to |||/fanin/owise
     // (&&&) :: m a b -> m a b' -> m a (b,b')
-    fn fanout<B1>(
+    fn dup<B1>(
         self,
         g: <Self::AFamily as ArrowFamily>::M<A, B1>,
     ) -> <Self::AFamily as ArrowFamily>::M<A, (B, B1)>
@@ -142,8 +145,9 @@ pub trait ArrowChoice<A, B>: Arrow<A, B> {
         A1: 'static,
         B1: 'static;
 
+    // Also called fanin, because of it's relationship with &&&/fanout/dup
     // (|||) :: m a b -> m c b -> m (Either a c) b
-    fn fanin<C>(
+    fn owise<C>(
         self,
         g: <Self::AcFamily as ChoiceFamily>::M<C, B>,
     ) -> <Self::AcFamily as ChoiceFamily>::M<Either<A, C>, B>
@@ -151,17 +155,4 @@ pub trait ArrowChoice<A, B>: Arrow<A, B> {
         A: 'static,
         B: 'static,
         C: 'static;
-}
-
-pub enum Either<L, R> {
-    Left(L),
-    Right(R),
-}
-impl<L, R> Either<L, R> {
-    pub fn mirror(self) -> Either<R, L> {
-        match self {
-            Either::Left(left) => Either::Right(left),
-            Either::Right(right) => Either::Left(right),
-        }
-    }
 }

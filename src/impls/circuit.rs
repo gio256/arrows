@@ -1,4 +1,4 @@
-use crate::arrow::*;
+use crate::{arrow::*, impls::either::Either};
 
 pub struct CircuitFamily;
 
@@ -88,10 +88,7 @@ impl<A, B> Arrow<A, B> for Circuit<A, B> {
 
     // (***) :: a b c -> a b' c' -> a (b,b') (c,c')
     // f *** g = first f >>> arr swap >>> first g >>> arr swap   where swap ~(x,y) = (y,x)
-    fn both<A1, B1>(
-        self,
-        right_arrow: <Self::AFamily as ArrowFamily>::M<A1, B1>,
-    ) -> <Self::AFamily as ArrowFamily>::M<(A, A1), (B, B1)>
+    fn both<A1, B1>(self, right_arrow: Circuit<A1, B1>) -> Circuit<(A, A1), (B, B1)>
     where
         A: 'static,
         B: 'static,
@@ -106,10 +103,7 @@ impl<A, B> Arrow<A, B> for Circuit<A, B> {
 
     // (&&&) :: m a b -> m a b' -> m a (b,b')
     // f &&& g = arr (\a -> (a,a)) >>> f *** g
-    fn fanout<B1>(
-        self,
-        right_arrow: <Self::AFamily as ArrowFamily>::M<A, B1>,
-    ) -> <Self::AFamily as ArrowFamily>::M<A, (B, B1)>
+    fn dup<B1>(self, right_arrow: Circuit<A, B1>) -> Circuit<A, (B, B1)>
     where
         Self: Sized,
         A: Clone + 'static,
@@ -159,8 +153,8 @@ impl<A, B> ArrowChoice<A, B> for Circuit<A, B> {
     {
         let f = move |either_ad| match either_ad {
             Either::Left(a) => {
-                let (cir_new, res) = self.call(a);
-                (cir_new.left(), Either::Left(res))
+                let (circ_new, res) = self.call(a);
+                (circ_new.left(), Either::Left(res))
             }
             Either::Right(d) => (self.left(), Either::Right(d)),
         };
@@ -168,7 +162,7 @@ impl<A, B> ArrowChoice<A, B> for Circuit<A, B> {
     }
 
     // right :: a b c -> a (Either d b) (Either d c)
-    fn right<D>(self) -> <Self::AcFamily as ChoiceFamily>::M<Either<D, A>, Either<D, B>>
+    fn right<D>(self) -> Circuit<Either<D, A>, Either<D, B>>
     where
         A: 'static,
         B: 'static,
@@ -186,13 +180,13 @@ impl<A, B> ArrowChoice<A, B> for Circuit<A, B> {
         B1: 'static,
     {
         self.left()
-            .then_pure(Either::mirror)
+            .then_pure(Either::flip)
             .then(g.left())
-            .then_pure(Either::mirror)
+            .then_pure(Either::flip)
     }
 
     // (|||) :: m a b -> m c b -> m (Either a c) b
-    fn fanin<C>(self, g: Circuit<C, B>) -> Circuit<Either<A, C>, B>
+    fn owise<C>(self, g: Circuit<C, B>) -> Circuit<Either<A, C>, B>
     where
         A: 'static,
         B: 'static,
@@ -222,6 +216,13 @@ where
     f.into()
 }
 
+impl<A> Circuit<A, A> {
+    #[cfg(test)]
+    fn id() -> Self {
+        CircuitFamily::id()
+    }
+}
+
 impl<A, B> Circuit<A, B> {
     fn new<F>(f: F) -> Self
     where
@@ -234,14 +235,21 @@ impl<A, B> Circuit<A, B> {
         (self.step)(a)
     }
 
+    #[cfg(test)]
+    fn output(self, a: A) -> B {
+        self.call(a).1
+    }
+
+    #[cfg(test)]
     fn run(self, xs: impl IntoIterator<Item = A>) -> impl Iterator<Item = B> {
-        xs.into_iter().scan(Some(self), |cir, x| {
-            let (cir_new, item) = cir.take()?.call(x);
-            *cir = Some(cir_new);
+        xs.into_iter().scan(Some(self), |circ, x| {
+            let (circ_new, item) = circ.take()?.call(x);
+            *circ = Some(circ_new);
             Some(item)
         })
     }
 
+    #[cfg(test)]
     fn accum<Acc, F>(acc: Acc, mut f: F) -> Self
     where
         Acc: 'static,
@@ -254,7 +262,8 @@ impl<A, B> Circuit<A, B> {
         Self::new(g)
     }
 
-    fn accum_show<F>(acc: B, mut f: F) -> Self
+    #[cfg(test)]
+    fn accum_dup<F>(acc: B, mut f: F) -> Self
     where
         F: FnMut(A, B) -> B + 'static,
         B: Clone + 'static,
@@ -268,54 +277,86 @@ impl<A, B> Circuit<A, B> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
     use super::*;
     use rand::{thread_rng, Rng};
     use std::ops;
 
     #[test]
-    fn test_cat() {
-        let cat = CircuitFamily::id::<usize>();
-        let res: Vec<_> = cat.run(vec![1, 2]).collect();
-        assert_eq!(res, vec![1, 2]);
-    }
-
-    fn total() -> Circuit<usize, usize> {
-        Circuit::accum_show(0, ops::Add::add)
+    fn test_category() {
+        let cat = Circuit::id();
+        let res: Vec<_> = cat.run(vec![1, 2, 3, 4]).collect();
+        assert_eq!(res, vec![1, 2, 3, 4]);
     }
 
     #[test]
-    fn test_accum() {
+    fn test_arrow() {
+        let eq2 = arrow(|n| n == 2).dup(Circuit::id()).output(2);
+        assert_eq!(eq2, (true, 2));
+
+        // if n is even { Some(n + 1) } else { None }
+        let inc_even_else_none = |n| {
+            arrow(|x| x & 1 == 0)
+                .dup(Circuit::id())
+                .then_pure(Either::from)
+                .then(arrow(|_| None).owise(arrow(|n| Some(n + 1))))
+                .output(n)
+        };
+        assert_eq!(inc_even_else_none(1), None);
+        assert_eq!(inc_even_else_none(2), Some(3));
+        assert_eq!(inc_even_else_none(3), None);
+        assert_eq!(inc_even_else_none(4), Some(5));
+    }
+
+    fn total() -> Circuit<usize, usize> {
+        Circuit::accum_dup(0, ops::Add::add)
+    }
+
+    fn oneshot() -> Circuit<(), bool> {
+        Circuit::accum(true, |(), acc| (acc, false))
+    }
+
+    #[test]
+    fn test_hangman() {
         let res: Vec<_> = total().run(vec![1, 0, 1, 0, 0, 2]).collect();
         assert_eq!(res, vec![1, 1, 2, 2, 2, 4]);
 
         let const1 = arrow(|_| 1);
         let uncurry_div = arrow(|(a, b)| a / b);
-        let get_mean = total().fanout(const1.then(total())).then(uncurry_div);
+        let get_mean = total().dup(const1.then(total())).then(uncurry_div);
 
         let running_avg: Vec<_> = get_mean.run(vec![1, 5, 8, 12, 100]).collect();
         assert_eq!(running_avg, vec![1, 3, 4, 6, 25]);
-    }
 
-    // fn generator<A>( -> Circuit<(), A>
-
-    #[test]
-    fn hangman() {
-        let dict = ["foo", "bar", "baz"];
-        let rng = thread_rng();
-        let range = 0..(dict.len() - 1);
-
-        let generator = Circuit::accum(rng, move |(), mut rng| (rng.gen_range(range.clone()), rng));
-        let pick_word = generator.then_pure(move |i| dict[i]);
-
-        let oneshot = Circuit::accum(true, |(), acc| (acc, false));
-        let res: Vec<_> = oneshot.run([(), (), (), ()]).collect();
+        // return true once, then false forever
+        // let oneshot = Circuit::accum(true, |(), acc| (acc, false));
+        let res: Vec<_> = oneshot().run([(), (), (), ()]).collect();
         assert_eq!(res, vec![true, false, false, false]);
 
+        // returns the last value it was given
         let delayed_echo = |acc| Circuit::accum(acc, |a, b| (b, a));
         let res: Vec<_> = delayed_echo(false)
             .run([true, false, true, false])
             .collect();
         assert_eq!(res, vec![false, true, false, true]);
+
+        let dict = ["foo", "bar", "baz"];
+        let rng = thread_rng();
+        let range = 0..(dict.len() - 1);
+
+        // choose a random word from the wordlist
+        let generator = Circuit::accum(rng, move |(), mut rng| (rng.gen_range(range.clone()), rng));
+        let pick_word = generator.then_pure(move |i| dict[i]);
+
+        // pick the word and then repeat it
+        let get_word = oneshot()
+            .then_pure(Either::from)
+            .then(arrow(|_| None).owise(pick_word.then_pure(Some)))
+            .then(Circuit::accum_dup(None, Option::or));
+
+        let mut repeat_word: Vec<_> = get_word.run([(), (), (), ()]).collect();
+        assert_eq!(repeat_word.len(), 4);
+        repeat_word.dedup();
+        assert_eq!(repeat_word.len(), 1);
+        assert!(dict.contains(&repeat_word[0].unwrap()));
     }
 }
